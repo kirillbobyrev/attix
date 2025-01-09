@@ -2,7 +2,7 @@
 
 The files can be later downloaded via wget or curl, for example:
 
-$ python print_download_urls.py -y 2024 -m 12 | xargs -n 1 wget -c
+$ python print_download_urls.py -y 2024 -m 12 | xargs -n 1 -P 4 wget -c
 """
 
 import calendar
@@ -29,7 +29,7 @@ def generate_lc0_urls(year, month):
             # Format date as YYYYMMDD
             date_str = f"{year}{month:02d}{day:02d}"
             # Format hour as HH
-            hour_str = f"HH{hour:02d}"
+            hour_str = f"{hour:02d}"
 
             # Create the full URL
             url = base_url.format(date=date_str, hour=hour_str)
@@ -50,5 +50,4 @@ if __name__ == "__main__":
     # Parse arguments
     args = parser.parse_args()
 
-    print(f"Generating URLs for {calendar.month_name[args.month]} {args.year}:")
     generate_lc0_urls(args.year, args.month)

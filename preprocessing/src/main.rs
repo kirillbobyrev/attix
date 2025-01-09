@@ -1,8 +1,8 @@
 use byteorder::{LittleEndian, ReadBytesExt};
 use clap::Parser;
-use core::panic;
 use flate2::read::GzDecoder;
-use std::fs::{self, File};
+use shakmaty::{Bitboard, Board, ByColor, ByRole, Chess, Role, Square};
+use std::fs::File;
 use std::io::{self, Read};
 use std::path::Path;
 use tar::Archive;
@@ -13,45 +13,24 @@ struct Args {
     /// Path to the tar file containing .gz training data
     #[arg(short, long)]
     tar_path: String,
-
-    #[arg(short, long, default_value_t = 10)]
-    num_entries: usize,
 }
 
+const MIN_PIECES: u32 = 7;
+
+// This struct loosely follows the format of the training data used by lc0.
+//
+// https://lczero.org/dev/wiki/training-data-format-versions/
+//
+// TODO: Store and process the castling rights.
+// This struct loosely follows the format of the training data used by lc0.
+//
+// https://lczero.org/dev/wiki/training-data-format-versions/
 #[derive(Debug)]
 struct TrainingData {
-    version: u32,
-    _input_format: u32,
-    _probabilities: Vec<f32>,
     planes: Vec<u64>,
-    castling_us_ooo: u8,
-    castling_us_oo: u8,
-    castling_them_ooo: u8,
-    castling_them_oo: u8,
-    _side_to_move_or_enpassant: u8,
-    rule50_count: u8,
-    _invariance_info: u8,
-    _dummy: u8,
-    _root_q: f32,
     best_q: f32,
-    _root_d: f32,
     best_d: f32,
-    _root_m: f32,
-    _best_m: f32,
-    _plies_left: f32,
-    _result_q: f32,
-    _result_d: f32,
-    _played_q: f32,
-    _played_d: f32,
-    _played_m: f32,
-    _orig_q: f32,
-    _orig_d: f32,
-    _orig_m: f32,
-    _visits: u32,
-    _played_idx: u16,
     best_idx: u16,
-    _policy_kld: f32,
-    _reserved: u32,
 }
 
 // For some reason, lc0 reverses the bits in the bytes of the bitboard before
@@ -68,10 +47,10 @@ fn reverse_bits_in_bytes(x: u64) -> u64 {
 impl TrainingData {
     fn read_from<R: Read>(mut reader: R) -> io::Result<Self> {
         let version = reader.read_u32::<LittleEndian>()?;
-        let input_format = reader.read_u32::<LittleEndian>()?;
-
-        let mut probabilities = vec![0.0; 1858];
-        for prob in probabilities.iter_mut() {
+        assert_eq!(version, 6);
+        let _input_format = reader.read_u32::<LittleEndian>()?;
+        let mut _probabilities = vec![0.0; 1858];
+        for prob in _probabilities.iter_mut() {
             *prob = reader.read_f32::<LittleEndian>()?;
         }
 
@@ -80,46 +59,93 @@ impl TrainingData {
             *plane = reverse_bits_in_bytes(reader.read_u64::<LittleEndian>()?);
         }
 
+        let _castling_us_ooo = reader.read_u8()?;
+        let _castling_us_oo = reader.read_u8()?;
+        let _castling_them_ooo = reader.read_u8()?;
+        let _castling_them_oo = reader.read_u8()?;
+        let _side_to_move_or_enpassant = reader.read_u8()?;
+        let _rule50_count = reader.read_u8()?;
+        let _invariance_info = reader.read_u8()?;
+        let _dummy = reader.read_u8()?;
+
+        let _root_q = reader.read_f32::<LittleEndian>()?;
+        let best_q = reader.read_f32::<LittleEndian>()?;
+
+        let _root_d = reader.read_f32::<LittleEndian>()?;
+        let best_d = reader.read_f32::<LittleEndian>()?;
+
+        let _root_m = reader.read_f32::<LittleEndian>()?;
+        let _best_m = reader.read_f32::<LittleEndian>()?;
+        let _plies_left = reader.read_f32::<LittleEndian>()?;
+        let _result_q = reader.read_f32::<LittleEndian>()?;
+        let _result_d = reader.read_f32::<LittleEndian>()?;
+        let _played_q = reader.read_f32::<LittleEndian>()?;
+        let _played_d = reader.read_f32::<LittleEndian>()?;
+        let _played_m = reader.read_f32::<LittleEndian>()?;
+        let _orig_q = reader.read_f32::<LittleEndian>()?;
+        let _orig_d = reader.read_f32::<LittleEndian>()?;
+        let _orig_m = reader.read_f32::<LittleEndian>()?;
+        let _visits = reader.read_u32::<LittleEndian>()?;
+        let _played_idx = reader.read_u16::<LittleEndian>()?;
+        let best_idx = reader.read_u16::<LittleEndian>()?;
+        let _policy_kld = reader.read_f32::<LittleEndian>()?;
+        let _reserved = reader.read_u32::<LittleEndian>()?;
+
         Ok(TrainingData {
-            version,
-            _input_format: input_format,
-            _probabilities: probabilities,
             planes,
-            castling_us_ooo: reader.read_u8()?,
-            castling_us_oo: reader.read_u8()?,
-            castling_them_ooo: reader.read_u8()?,
-            castling_them_oo: reader.read_u8()?,
-            _side_to_move_or_enpassant: reader.read_u8()?,
-            rule50_count: reader.read_u8()?,
-            _invariance_info: reader.read_u8()?,
-            _dummy: reader.read_u8()?,
-            _root_q: reader.read_f32::<LittleEndian>()?,
-            best_q: reader.read_f32::<LittleEndian>()?,
-            _root_d: reader.read_f32::<LittleEndian>()?,
-            best_d: reader.read_f32::<LittleEndian>()?,
-            _root_m: reader.read_f32::<LittleEndian>()?,
-            _best_m: reader.read_f32::<LittleEndian>()?,
-            _plies_left: reader.read_f32::<LittleEndian>()?,
-            _result_q: reader.read_f32::<LittleEndian>()?,
-            _result_d: reader.read_f32::<LittleEndian>()?,
-            _played_q: reader.read_f32::<LittleEndian>()?,
-            _played_d: reader.read_f32::<LittleEndian>()?,
-            _played_m: reader.read_f32::<LittleEndian>()?,
-            _orig_q: reader.read_f32::<LittleEndian>()?,
-            _orig_d: reader.read_f32::<LittleEndian>()?,
-            _orig_m: reader.read_f32::<LittleEndian>()?,
-            _visits: reader.read_u32::<LittleEndian>()?,
-            _played_idx: reader.read_u16::<LittleEndian>()?,
-            best_idx: reader.read_u16::<LittleEndian>()?,
-            _policy_kld: reader.read_f32::<LittleEndian>()?,
-            _reserved: reader.read_u32::<LittleEndian>()?,
+            best_q,
+            best_d,
+            best_idx,
         })
+    }
+
+    fn to_position(&self) -> Board {
+        Board::from_bitboards(
+            ByRole {
+                pawn: Bitboard(self.planes[0] | self.planes[6]),
+                knight: Bitboard(self.planes[1] | self.planes[7]),
+                bishop: Bitboard(self.planes[2] | self.planes[8]),
+                rook: Bitboard(self.planes[3] | self.planes[9]),
+                queen: Bitboard(self.planes[4] | self.planes[10]),
+                king: Bitboard(self.planes[5] | self.planes[11]),
+            },
+            ByColor {
+                white: Bitboard(self.planes[0..6].iter().fold(0, |acc, &x| acc | x)),
+                black: Bitboard(self.planes[6..12].iter().fold(0, |acc, &x| acc | x)),
+            },
+        )
     }
 }
 
 fn process_position(data: TrainingData) {
-    assert_eq!(data.version, 6);
-    assert!(data._side_to_move_or_enpassant < 2);
+    // Filter out positions with too few pieces that will be covered by Syzygy endgame tablebase.
+    let pieces = data
+        .planes
+        .iter()
+        .take(12)
+        .fold(0, |acc, plane| acc + plane.count_ones());
+
+    // Filter out positions with too few pieces.
+    if pieces <= MIN_PIECES {
+        return;
+    }
+
+    // Filter out promotions early.
+    if preprocessing::IDX_TO_MOVE[data.best_idx as usize].len() > 4 {
+        return;
+    }
+
+    let board = data.to_position();
+    println!(
+        "{} {:.3} {:.3} {}",
+        board,
+        data.best_q,
+        data.best_d,
+        preprocessing::IDX_TO_MOVE[data.best_idx as usize]
+    );
+
+    // TODO: Filter out captures.
+    // TODO: Filter out checks.
 }
 
 fn process_gz_file<R: Read>(reader: R) -> io::Result<()> {
